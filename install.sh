@@ -4,7 +4,6 @@
 # Waterwall Web Panel - Interactive Manager
 # ==============================================================================
 
-# رنگ‌ها برای زیبایی منو
 GREEN="\e[32m"
 BLUE="\e[34m"
 RED="\e[31m"
@@ -17,7 +16,7 @@ function install_panel() {
     apt update
     apt install -y python3 python3-pip curl
 
-    echo -e "${BLUE}>>> Installing Python packages (bypassing Ubuntu 24 restrictions)...${RESET}"
+    echo -e "${BLUE}>>> Installing Python packages...${RESET}"
     pip3 install fastapi uvicorn pydantic --ignore-installed --break-system-packages
 
     echo -e "${BLUE}>>> Creating working directory at /opt/waterwall-panel...${RESET}"
@@ -70,7 +69,6 @@ def check_tunnel(version: str, service_name: str):
 
     port = "Unknown"
     config_cat, _ = run_shell(f"cat /etc/systemd/system/{service_name}.service")
-    # جستجو برای پیدا کردن پورت در فایل سرویس (پشتیبانی از فرمت‌های مختلف)
     port_match = re.search(r'(-p|--port)\s+(\d+)', config_cat)
     if port_match:
         port = port_match.group(2)
@@ -94,7 +92,6 @@ def serve_frontend():
 def get_status():
     tunnels = []
     
-    # اصلاح نام سرویس‌ها بر اساس سرور شما
     v1 = check_tunnel("v1", "waterwall-proto51")
     if v1: tunnels.append(v1)
         
@@ -111,7 +108,6 @@ def get_status():
 
 @app.post("/api/action")
 def manage_tunnel(req: ActionRequest):
-    # مپ کردن نسخه به نام دقیق سرویس
     service = "waterwall-proto51" if req.version == "v1" else "waterwall-proto51-v2"
     
     if req.action in ["start", "stop", "restart"]:
@@ -121,7 +117,6 @@ def manage_tunnel(req: ActionRequest):
         raise HTTPException(status_code=500, detail="خطا در اجرای دستور.")
         
     elif req.action == "edit_port" and req.new_port:
-        # تغییر پورت در فایل سرویس
         run_shell(f"sudo sed -i -E 's/(-p|--port) [0-9]+/\\1 {req.new_port}/g' /etc/systemd/system/{service}.service")
         run_shell("sudo systemctl daemon-reload")
         run_shell(f"sudo systemctl restart {service}")
@@ -169,7 +164,7 @@ EOF
                 containerEl.innerHTML = '';
 
                 if (data.active_tunnels.length === 0) {
-                    containerEl.innerHTML = '<p class="text-yellow-400">سرویس Waterwall-proto51 روی این سرور یافت نشد.</p>';
+                    containerEl.innerHTML = '<p class="text-yellow-400">سرویس Waterwall روی این سرور یافت نشد.</p>';
                     return;
                 }
 
@@ -283,9 +278,6 @@ function uninstall_panel() {
     echo -e "${GREEN}>>> Uninstallation complete. Panel has been removed.${RESET}"
 }
 
-# -----------------
-# منوی تعاملی (Bash Menu)
-# -----------------
 clear
 echo -e "${BLUE}=======================================${RESET}"
 echo -e "${YELLOW}      Waterwall Panel Installer${RESET}"
@@ -302,7 +294,7 @@ case $choice in
         ;;
     2)
         read -p "Are you sure you want to completely remove the panel? (y/n): " confirm
-        if [[ "$confirm" == "y" \vert{}\vert{} "$confirm" == "Y" ]]; then
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
             uninstall_panel
         else
             echo "Uninstallation canceled."
