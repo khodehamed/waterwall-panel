@@ -1,7 +1,9 @@
+wget -qO install.sh https://raw.githubusercontent.com/khodehamed/waterwall-panel/refs/heads/main/install.sh
+cat << 'EOF_BASH' > install.sh
 #!/bin/bash
 
 # ==============================================================================
-# Waterwall Web Panel - Interactive Manager
+# Waterwall Web Panel - Advanced Manager (Full Config Editable)
 # ==============================================================================
 
 GREEN="\e[32m"
@@ -19,11 +21,11 @@ function install_panel() {
     echo -e "${BLUE}>>> Installing Python packages...${RESET}"
     pip3 install fastapi uvicorn pydantic --ignore-installed --break-system-packages
 
-    echo -e "${BLUE}>>> Creating working directory at /opt/waterwall-panel...${RESET}"
+    echo -e "${BLUE}>>> Creating working directory...${RESET}"
     mkdir -p /opt/waterwall-panel
     cd /opt/waterwall-panel
 
-    echo -e "${BLUE}>>> Generating backend API code...${RESET}"
+    echo -e "${BLUE}>>> Generating advanced backend API code...${RESET}"
     cat << 'EOF' > panel_api.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,16 +38,13 @@ import os
 app = FastAPI(title="Waterwall Web Panel")
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
 
 class ActionRequest(BaseModel):
     version: str
     action: str
-    new_port: str = None
+    new_config: str = None
 
 def run_shell(command: str):
     try:
@@ -62,23 +61,24 @@ def check_tunnel(version: str, service_name: str):
     status_out, _ = run_shell(f"systemctl is-active {service_name}")
     is_active = (status_out == "active")
 
-    uptime = "Stopped"
+    uptime = "متوقف شده"
     if is_active:
         time_out, _ = run_shell(f"systemctl show {service_name} --property=ActiveEnterTimestamp")
-        uptime = time_out.replace("ActiveEnterTimestamp=", "") or "Running"
+        uptime = time_out.replace("ActiveEnterTimestamp=", "") or "در حال اجرا"
 
-    port = "Unknown"
+    # خواندن کل خط اجرایی تانل (شامل آی‌پی‌ها و پورت‌های مبدأ و مقصد)
     config_cat, _ = run_shell(f"cat /etc/systemd/system/{service_name}.service")
-    port_match = re.search(r'(-p|--port)\s+(\d+)', config_cat)
-    if port_match:
-        port = port_match.group(2)
+    exec_start = "نامشخص"
+    exec_match = re.search(r'^ExecStart=(.+)$', config_cat, re.MULTILINE)
+    if exec_match:
+        exec_start = exec_match.group(1).strip()
 
     return {
         "version": version,
         "service_name": service_name,
         "status": "active" if is_active else "inactive",
         "uptime": uptime,
-        "port": port
+        "config": exec_start
     }
 
 @app.get("/")
@@ -91,7 +91,6 @@ def serve_frontend():
 @app.get("/api/status")
 def get_status():
     tunnels = []
-    
     v1 = check_tunnel("v1", "waterwall-proto51")
     if v1: tunnels.append(v1)
         
@@ -101,10 +100,7 @@ def get_status():
     hostname, _ = run_shell("hostname")
     location = "ایران" if "ir" in hostname.lower() else "خارج"
 
-    return {
-        "server_location": location,
-        "active_tunnels": tunnels
-    }
+    return {"server_location": location, "active_tunnels": tunnels}
 
 @app.post("/api/action")
 def manage_tunnel(req: ActionRequest):
@@ -116,11 +112,24 @@ def manage_tunnel(req: ActionRequest):
             return {"message": f"عملیات {req.action} با موفقیت انجام شد."}
         raise HTTPException(status_code=500, detail="خطا در اجرای دستور.")
         
-    elif req.action == "edit_port" and req.new_port:
-        run_shell(f"sudo sed -i -E 's/(-p|--port) [0-9]+/\\1 {req.new_port}/g' /etc/systemd/system/{service}.service")
-        run_shell("sudo systemctl daemon-reload")
-        run_shell(f"sudo systemctl restart {service}")
-        return {"message": f"پورت انتقال با موفقیت به {req.new_port} تغییر یافت."}
+    elif req.action == "edit_config" and req.new_config:
+        # جایگزینی کل دستور ExecStart در فایل سرویس
+        service_file = f"/etc/systemd/system/{service}.service"
+        try:
+            with open(service_file, 'r') as f:
+                content = f.read()
+            
+            # تغییر خط ExecStart با حفظ بقیه تنظیمات فایل
+            new_content = re.sub(r'^ExecStart=.*$', f"ExecStart={req.new_config}", content, flags=re.MULTILINE)
+            
+            with open(service_file, 'w') as f:
+                f.write(new_content)
+                
+            run_shell("sudo systemctl daemon-reload")
+            run_shell(f"sudo systemctl restart {service}")
+            return {"message": "کانفیگ (مبدأ و مقصد) با موفقیت آپدیت و تانل ری‌استارت شد."}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     raise HTTPException(status_code=400, detail="درخواست نامعتبر")
 EOF
@@ -132,7 +141,7 @@ EOF
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>پنل مدیریت Waterwall</title>
+    <title>پنل پیشرفته Waterwall</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
     <style>body { font-family: 'Vazirmatn', sans-serif; }</style>
@@ -141,7 +150,7 @@ EOF
     <header class="bg-gray-800 shadow-lg border-b border-gray-700">
         <div class="max-w-6xl mx-auto px-4 py-5 flex justify-between items-center">
             <h1 id="server-title" class="text-2xl font-bold text-blue-400">در حال بررسی...</h1>
-            <button onclick="loadDashboard()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg transition text-sm">🔄 بروزرسانی</button>
+            <button onclick="loadDashboard()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg transition text-sm">🔄 رفرش</button>
         </div>
     </header>
     <main class="max-w-6xl mx-auto px-4 py-8">
@@ -150,6 +159,7 @@ EOF
 
     <script>
         const API_URL = window.location.origin + "/api";
+        let tunnelsData = {};
 
         async function loadDashboard() {
             const titleEl = document.getElementById('server-title');
@@ -160,8 +170,9 @@ EOF
                 const response = await fetch(`${API_URL}/status`);
                 const data = await response.json();
 
-                titleEl.innerHTML = `🎛️ مدیریت تانل - سرور <span class="text-white">${data.server_location}</span>`;
+                titleEl.innerHTML = `🎛️ مدیریت پیشرفته تانل - سرور <span class="text-white">${data.server_location}</span>`;
                 containerEl.innerHTML = '';
+                tunnelsData = {};
 
                 if (data.active_tunnels.length === 0) {
                     containerEl.innerHTML = '<p class="text-yellow-400">سرویس Waterwall روی این سرور یافت نشد.</p>';
@@ -169,6 +180,7 @@ EOF
                 }
 
                 data.active_tunnels.forEach(tunnel => {
+                    tunnelsData[tunnel.version] = tunnel.config; // ذخیره کانفیگ برای ادیت
                     const isActive = tunnel.status === 'active';
                     const statusColor = isActive ? 'text-green-400' : 'text-red-400';
                     const statusBg = isActive ? 'bg-green-400/10 border-green-500/30' : 'bg-red-400/10 border-red-500/30';
@@ -184,24 +196,24 @@ EOF
                                     </div>
                                     <div class="px-3 py-1 rounded-lg border ${statusBg} ${statusColor} text-sm font-semibold">${statusText}</div>
                                 </div>
-                                <div class="grid grid-cols-2 gap-4 mb-6">
-                                    <div class="bg-gray-900 rounded p-3 border border-gray-700">
-                                        <p class="text-xs text-gray-400 mb-1">آپتایم</p>
-                                        <p class="font-medium text-left dir-ltr text-sm">${tunnel.uptime}</p>
-                                    </div>
-                                    <div class="bg-gray-900 rounded p-3 border border-gray-700">
-                                        <p class="text-xs text-gray-400 mb-1">پورت انتقال</p>
-                                        <p class="font-medium font-mono text-blue-400">${tunnel.port}</p>
-                                    </div>
+                                <div class="mb-4">
+                                    <p class="text-xs text-gray-400 mb-1">آپتایم:</p>
+                                    <p class="font-medium text-left dir-ltr text-sm">${tunnel.uptime}</p>
+                                </div>
+                                <div class="bg-gray-900 rounded p-3 border border-gray-700 mb-6">
+                                    <p class="text-xs text-yellow-400 mb-2">اطلاعات مبدأ و مقصد (کانفیگ اجرایی):</p>
+                                    <p class="font-medium font-mono text-blue-300 text-sm break-all dir-ltr text-left">${tunnel.config}</p>
                                 </div>
                             </div>
-                            <div class="flex flex-wrap gap-2 mt-4">
+                            <div class="flex flex-wrap gap-2 mt-2">
                                 <button onclick="sendAction('${tunnel.version}', 'restart')" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2 px-2 rounded text-sm">🔄 ری‌استارت</button>
                                 ${isActive ? 
                                     `<button onclick="sendAction('${tunnel.version}', 'stop')" class="flex-1 bg-red-600 hover:bg-red-500 text-white py-2 px-2 rounded text-sm">🛑 توقف</button>` : 
                                     `<button onclick="sendAction('${tunnel.version}', 'start')" class="flex-1 bg-green-600 hover:bg-green-500 text-white py-2 px-2 rounded text-sm">▶️ اجرا</button>`
                                 }
-                                <button onclick="changePortPrompt('${tunnel.version}')" class="w-full mt-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 text-white py-2 px-4 rounded text-sm">⚙️ تغییر پورت پروتکل</button>
+                                <button onclick="changeConfigPrompt('${tunnel.version}')" class="w-full mt-2 bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-2 px-4 rounded text-sm transition">
+                                    ⚙️ ویرایش مبدأ و مقصد
+                                </button>
                             </div>
                         </div>
                     `;
@@ -212,12 +224,12 @@ EOF
             }
         }
 
-        async function sendAction(version, action, newPort = null) {
+        async function sendAction(version, action, newConfig = null) {
             try {
                 const res = await fetch(`${API_URL}/action`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ version: version, action: action, new_port: newPort })
+                    body: JSON.stringify({ version: version, action: action, new_config: newConfig })
                 });
                 const result = await res.json();
                 alert(result.message || "عملیات انجام شد.");
@@ -227,10 +239,11 @@ EOF
             }
         }
 
-        function changePortPrompt(version) {
-            const newPort = prompt("شماره پورت انتقال جدید را وارد کنید:");
-            if (newPort && !isNaN(newPort)) {
-                sendAction(version, 'edit_port', newPort);
+        function changeConfigPrompt(version) {
+            const currentConfig = tunnelsData[version];
+            const newConfig = prompt("دستور اجرای تانل (شامل آی‌پی و پورت مبدأ/مقصد) را ویرایش کنید:", currentConfig);
+            if (newConfig && newConfig !== currentConfig) {
+                sendAction(version, 'edit_config', newConfig);
             }
         }
 
@@ -240,30 +253,13 @@ EOF
 </html>
 EOF
 
-    echo -e "${BLUE}>>> Creating Systemd service (Port: ${PANEL_PORT})...${RESET}"
-    cat << EOF > /etc/systemd/system/waterwall-panel.service
-[Unit]
-Description=Waterwall Web Panel
-After=network.target
-
-[Service]
-User=root
-WorkingDirectory=/opt/waterwall-panel
-ExecStart=/usr/local/bin/uvicorn panel_api:app --host 0.0.0.0 --port ${PANEL_PORT}
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    echo -e "${BLUE}>>> Starting service...${RESET}"
+    echo -e "${BLUE}>>> Restarting services...${RESET}"
     systemctl daemon-reload
-    systemctl enable waterwall-panel
     systemctl restart waterwall-panel
 
     SERVER_IP=$(curl -s -4 ifconfig.me)
     echo -e "${GREEN}============================================================${RESET}"
-    echo -e "${GREEN}>>> Installation Complete!${RESET}"
+    echo -e "${GREEN}>>> Update Complete!${RESET}"
     echo -e "${GREEN}>>> Panel URL: ${YELLOW}http://${SERVER_IP}:${PANEL_PORT}${RESET}"
     echo -e "${GREEN}============================================================${RESET}"
 }
@@ -275,7 +271,7 @@ function uninstall_panel() {
     rm -f /etc/systemd/system/waterwall-panel.service
     rm -rf /opt/waterwall-panel
     systemctl daemon-reload
-    echo -e "${GREEN}>>> Uninstallation complete. Panel has been removed.${RESET}"
+    echo -e "${GREEN}>>> Uninstallation complete.${RESET}"
 }
 
 clear
@@ -289,22 +285,13 @@ echo -e "${BLUE}=======================================${RESET}"
 read -p "Select an option [1-3]: " choice
 
 case $choice in
-    1)
-        install_panel
-        ;;
+    1) install_panel ;;
     2)
-        read -p "Are you sure you want to completely remove the panel? (y/n): " confirm
-        if [[ "$confirm" =~ ^[Yy]$ ]]; then
-            uninstall_panel
-        else
-            echo "Uninstallation canceled."
-        fi
+        read -p "Are you sure? (y/n): " confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then uninstall_panel; fi
         ;;
-    3)
-        echo "Exiting..."
-        exit 0
-        ;;
-    *)
-        echo -e "${RED}Invalid option!${RESET}"
-        ;;
+    3) exit 0 ;;
+    *) echo -e "${RED}Invalid option!${RESET}" ;;
 esac
+EOF_BASH
+bash install.sh
